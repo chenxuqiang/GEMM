@@ -77,13 +77,12 @@ void copy(float *input, float *output, int M, int N)
 #if 1
 void CommonGemm_avx(float *A, float *B, float *C, int M, int N, int K)
 {
-    float *copyB = (float *)malloc(sizeof(float) * N * K);
-    float tempC[8];
-    float tempZero[8] = {0, 0, 0, 0, 0, 0, 0, 0};
-    copy(B, copyB, K, N);
+    float *copyB = (float *)aligned_alloc(32, sizeof(float) * N * K);
+    float tempC0[8], tempC1[8], tempC2[8], tempC3[8];
 
-    __m256 ymm0, ymm1, ymm2, ymm3, ymm4, ymm5, ymm6, ymm7;
-    __m256 ymm8, ymm9, ymm10, ymm11, ymm12, ymm13, ymm14, ymm15;
+    copy(B, copyB, K, N);
+    
+    __m256 ymm0, ymm1, ymm2, ymm3, ymm4, ymm5, ymm6, ymm7, ymm8;
 
     float *pA = A;
     float *ppA = A;
@@ -91,29 +90,53 @@ void CommonGemm_avx(float *A, float *B, float *C, int M, int N, int K)
     float *pB = copyB;
     float *ppB = copyB;
 
-    float *pC = C;
-
     int i = 0, j = 0, k = 0;
     for (i = 0; i < M; i++) {
         ppB = pB;
         pA  = ppA;
-        for (j = 0; j < N; j++) {
+        for (j = 0; j < N; j += 4) {
             ppA = pA;
-            ymm1 = __builtin_ia32_loadups256(tempZero);
+            ppB = pB + N * j;
+            ymm1 = _mm256_set1_ps(0.0);
+            ymm2 = _mm256_set1_ps(0.0);
+            ymm3 = _mm256_set1_ps(0.0);
+            ymm4 = _mm256_set1_ps(0.0);
 
             for (k = 0; k < K; k += 8) {
-                ymm8 = __builtin_ia32_loadups256(ppB);
-                ymm0 = __builtin_ia32_loadups256(ppA);
+                ymm0 = _mm256_loadu_ps(ppA);
+                _mm_prefetch(ppA + 32, 1);
 
-                ymm0 = __builtin_ia32_mulps256(ymm0, ymm8);
-                ymm1 = __builtin_ia32_addps256(ymm0, ymm1);
+                ymm8 = _mm256_load_ps(ppB);
+                ymm7 = _mm256_load_ps(ppB + N);
+                ymm6 = _mm256_load_ps(ppB + N * 2);
+                ymm5 = _mm256_load_ps(ppB + N * 3);
+
+                ymm8 = _mm256_mul_ps(ymm0, ymm8);
+                ymm1 = _mm256_add_ps(ymm8, ymm1);
+
+                ymm7 = _mm256_mul_ps(ymm0, ymm7);
+                ymm2 = _mm256_add_ps(ymm7, ymm2);
+
+                ymm6 = _mm256_mul_ps(ymm0, ymm6);
+                ymm3 = _mm256_add_ps(ymm6, ymm3);
+
+                ymm5 = _mm256_mul_ps(ymm0, ymm5);
+                ymm4 = _mm256_add_ps(ymm5, ymm4);
 
                 ppB += 8;
                 ppA += 8;
             }
-            __builtin_ia32_storeups256(tempC, ymm1);
+
+            _mm256_store_ps(tempC0, ymm1);
+            _mm256_store_ps(tempC1, ymm2);
+            _mm256_store_ps(tempC2, ymm3);
+            _mm256_store_ps(tempC3, ymm4);
+
             for (int p = 0; p < 8; p++) {
-                C[i * N + j] += tempC[p];
+                C[i * N + j] += tempC0[p];
+                C[i * N + j + 1] += tempC1[p];
+                C[i * N + j + 2] += tempC2[p];
+                C[i * N + j + 3] += tempC3[p];
             }
 
             int kR = k % 4;
@@ -162,6 +185,7 @@ int main(int argc, char *argv[])
 
     for (int i = 0; i < MS * NS; i++) {
         C[i] = 0;
+        C2[i] = 0;
     }
 
     clock_t startTime, endTime;
@@ -188,9 +212,9 @@ int main(int argc, char *argv[])
 
     bool r = VerifyResult(C, C2, MS, NS);
     if (r) {
-        printf("[success].\n");
+        printf("[Success].\n");
     } else {
-        printf("[failed].\n");
+        printf("[Failed].\n");
     }
 
     free(C2);

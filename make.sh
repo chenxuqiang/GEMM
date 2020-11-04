@@ -1,3 +1,3 @@
-g++ -c gemm.cc -std=c++11 -mavx
+g++ -c gemm.cc -mavx
 g++ -o gemm gemm.o
 ./gemm
